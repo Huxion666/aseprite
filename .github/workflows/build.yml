@@ -20,7 +20,7 @@ jobs:
       shell: powershell  # 改用PowerShell提升兼容性
       run: |
         $skia_url = & "${env:GITHUB_WORKSPACE}/laf/misc/skia-url.sh"
-        curl -L -o skia.zip "$skia_url"
+        curl.exe -L -o skia.zip "$skia_url"
         Expand-Archive -Path skia.zip -DestinationPath skia
     
     - uses: aseprite/get-ninja@main
