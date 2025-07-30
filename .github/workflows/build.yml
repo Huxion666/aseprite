@@ -11,7 +11,6 @@ jobs:
         scripting: [lua]
     
     steps:
-      # 修复点1：统一步骤缩进为2空格
       - uses: actions/checkout@v4
         with:
           submodules: 'recursive'
@@ -42,34 +41,64 @@ jobs:
         shell: bash
         run: cd build && ninja
       
+      - name: Verify Build Output
+        shell: powershell
+        run: |
+          if (-not (Test-Path "build\bin\aseprite.exe")) {
+            Write-Error "❌ 编译失败：未找到 aseprite.exe"
+            Get-ChildItem build\bin
+            exit 1
+          }
+      
       - name: Package Release
         shell: powershell
         run: |
-          # 动态定位 ver.h 文件（优先检查构建目录）
-          $verPath = if (Test-Path "build\src\ver.h") { 
-            "build\src\ver.h" 
-          } else { 
-            "src\ver.h"
+          # 查找版本文件
+          $verPath = $null
+          if (Test-Path "build\src\ver.h") { 
+            $verPath = "build\src\ver.h"
+          } 
+          elseif (Test-Path "src\ver.h") { 
+            $verPath = "src\ver.h"
           }
-          #  若仍不存在则强制报错退出
-          if (-not (Test-Path $verPath)) {
+
+          if (-not $verPath -or -not (Test-Path $verPath)) {
             Write-Error "❌ 致命错误：未找到版本文件 ver.h"
+            Get-ChildItem -Recurse -Filter "ver.h" | Format-Table FullName
             exit 1
           }
-          # 安全读取版本号（修正引号问题）
-          $verLine = Get-Content $verPath | Select-String '#define VERSION'
-          $version = $verLine.Line.Split()[-1].Trim('"')  # 关键修复
+
+          # 安全读取版本号 - 使用纯 PowerShell 方法避免引号问题
+          $versionContent = Get-Content $verPath
+          $versionLine = $versionContent | Where-Object { $_ -match '#define VERSION' }
+
+          if (-not $versionLine) {
+            Write-Error "❌ 在版本文件中未找到 VERSION 定义"
+            exit 1
+          }
+
+          # 提取版本号 - 避免使用 Split() 和 Trim() 的复杂链式调用
+          $version = $versionLine.Split()[-1] -replace '"', ''
+
           # 打包操作
           $pkgDir = "aseprite-$version-windows"
-          New-Item -Type Directory -Path $pkgDir -Force
-          Copy-Item "build\bin\*" $pkgDir
+          New-Item -ItemType Directory -Path $pkgDir -Force
+          Copy-Item "build\bin\aseprite.*" $pkgDir
+
+          # 添加额外必要的 DLL 文件
+          if (Test-Path "build\bin\vc_redist.x64.exe") {
+            Copy-Item "build\bin\vc_redist.x64.exe" $pkgDir
+          }
+
           Compress-Archive -Path $pkgDir -DestinationPath "$pkgDir.zip"
+
           # 导出路径供后续上传使用
-          echo "PACKAGE_PATH=$pwd\$pkgDir.zip" >> $env:GITHUB_ENV
+          $packagePath = (Resolve-Path "$pwd\$pkgDir.zip").Path
+          echo "PACKAGE_PATH=$packagePath" >> $env:GITHUB_ENV
       
-      # 修复点2：上传步骤独立于Package Release
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: aseprite-build
           path: ${{ env.PACKAGE_PATH }}
+          
