@@ -61,11 +61,10 @@ jobs:
           elseif (Test-Path "src\ver.h") { 
             $verPath = "src\ver.h"
           }
-
-          if (-not $verPath -or -not (Test-Path $verPath)) {
-            Write-Error "❌ 致命错误：未找到版本文件 ver.h"
-            Get-ChildItem -Recurse -Filter "ver.h" | Format-Table FullName
-            exit 1
+          if (-not $verPath -or -not (Test-Path $verPath)) { 
+            Write-Error "❌ 致命错误：未找到版本文件 ver.h" 
+            Get-ChildItem -Recurse -Filter "ver.h" | Format-Table FullName 
+            exit 1 
           }
 
           # 安全读取版本号 - 使用纯 PowerShell 方法避免引号问题
