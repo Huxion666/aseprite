@@ -47,27 +47,23 @@ jobs:
         run: |
           # 动态定位 ver.h 文件（优先检查构建目录）
           $verPath = if (Test-Path "build\src\ver.h") { 
-          "build\src\ver.h" 
+            "build\src\ver.h" 
           } else { 
-          "src\ver.h"
+            "src\ver.h"
           }
-    
-          # 若仍不存在则强制报错退出
+          #  若仍不存在则强制报错退出
           if (-not (Test-Path $verPath)) {
-          Write-Error "❌ 致命错误：未找到版本文件 ver.h"
-          exit 1
+            Write-Error "❌ 致命错误：未找到版本文件 ver.h"
+            exit 1
           }
-    
-          # 安全读取版本号
+          # 安全读取版本号（修正引号问题）
           $verLine = Get-Content $verPath | Select-String '#define VERSION'
-          $version = $verLine.Line.Split()[-1].Trim('"')
-    
+          $version = $verLine.Line.Split()[-1].Trim('"')  # 关键修复
           # 打包操作
           $pkgDir = "aseprite-$version-windows"
           New-Item -Type Directory -Path $pkgDir -Force
           Copy-Item "build\bin\*" $pkgDir
           Compress-Archive -Path $pkgDir -DestinationPath "$pkgDir.zip"
-    
           # 导出路径供后续上传使用
           echo "PACKAGE_PATH=$pwd\$pkgDir.zip" >> $env:GITHUB_ENV
       
