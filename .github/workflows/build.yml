@@ -2,57 +2,59 @@ name: build
 on: [push, pull_request]
 jobs:
   build:
-    runs-on: windows-latest  # 仅保留Windows系统
+    runs-on: windows-latest
     strategy:
       fail-fast: false
       matrix:
-        # 仅保留必要的构建组合
         build_type: [RelWithDebInfo]
         ui: [gui]
         scripting: [lua]
-    steps:
-- uses: actions/checkout@v4
-  with:
-    submodules: 'recursive'
-
-- name: Install Skia
-  if: ${{ matrix.ui == 'gui' }}
-  shell: bash
-  run: |
-    WORKSPACE_PATH="${GITHUB_WORKSPACE//\\//}"
-    skia_url=$(source "$WORKSPACE_PATH/laf/misc/skia-url.sh")
-    curl --retry 3 -L -o skia.zip "$skia_url"
-    unzip -q skia.zip -d skia
-
-- uses: aseprite/get-ninja@main
-- uses: ilammy/msvc-dev-cmd@v1
-
-- name: Generating Makefiles
-  shell: bash
-  run: |
-    cmake -S . -B build -G Ninja \
-      -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
-      -DENABLE_SCRIPTING=ON \
-      -DLAF_BACKEND=skia \
-      -DSKIA_DIR="$PWD/skia" \
-      -DSKIA_LIBRARY_DIR="$PWD/skia/out/Release-x64"
-
-- name: Compiling
-  shell: bash
-  run: cd build && ninja
-
-- name: Package Release
-  shell: powershell
-  run: |
-    $verLine = Select-String -Path "src/ver.h" -Pattern '#define VERSION'
-    $version = $verLine.Line.Split()[-1].Trim('"')
-    New-Item -ItemType Directory -Force -Path "aseprite-$version-windows"
-    Copy-Item "build\bin\aseprite.*" "aseprite-$version-windows"
-    Compress-Archive -Path "aseprite-$version-windows" -DestinationPath "aseprite-$version-windows.zip"
     
-    # 上传构建成果
-    - name: Upload Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: asepprite-build
-        path: ${{ env.PACKAGE_PATH }}
+    steps:
+      # 修复点1：统一步骤缩进为2空格
+      - uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+      
+      - name: Install Skia
+        if: ${{ matrix.ui == 'gui' }}
+        shell: bash
+        run: |
+          WORKSPACE_PATH="${GITHUB_WORKSPACE//\\//}"
+          skia_url=$(source "$WORKSPACE_PATH/laf/misc/skia-url.sh")
+          curl --retry 3 -L -o skia.zip "$skia_url"
+          unzip -q skia.zip -d skia
+      
+      - uses: aseprite/get-ninja@main
+      - uses: ilammy/msvc-dev-cmd@v1
+      
+      - name: Generating Makefiles
+        shell: bash
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DENABLE_SCRIPTING=ON \
+            -DLAF_BACKEND=skia \
+            -DSKIA_DIR="$PWD/skia" \
+            -DSKIA_LIBRARY_DIR="$PWD/skia/out/Release-x64"
+      
+      - name: Compiling
+        shell: bash
+        run: cd build && ninja
+      
+      - name: Package Release
+        shell: powershell
+        run: |
+          $verLine = Select-String -Path "src/ver.h" -Pattern '#define VERSION'
+          $version = $verLine.Line.Split()[-1].Trim('"')
+          New-Item -ItemType Directory -Force -Path "aseprite-$version-windows"
+          Copy-Item "build\bin\aseprite.*" "aseprite-$version-windows"
+          Compress-Archive -Path "aseprite-$version-windows" -DestinationPath "aseprite-$version-windows.zip"
+          echo "PACKAGE_PATH=$PWD/aseprite-$version-windows.zip" >> $env:GITHUB_ENV
+      
+      # 修复点2：上传步骤独立于Package Release
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aseprite-build
+          path: ${{ env.PACKAGE_PATH }}
