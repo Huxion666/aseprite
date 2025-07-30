@@ -45,12 +45,31 @@ jobs:
       - name: Package Release
         shell: powershell
         run: |
-          $verLine = Select-String -Path "src/ver.h" -Pattern '#define VERSION'
+          # 动态定位 ver.h 文件（优先检查构建目录）
+          $verPath = if (Test-Path "build\src\ver.h") { 
+          "build\src\ver.h" 
+          } else { 
+          "src\ver.h"
+          }
+    
+          # 若仍不存在则强制报错退出
+          if (-not (Test-Path $verPath)) {
+          Write-Error "❌ 致命错误：未找到版本文件 ver.h"
+          exit 1
+          }
+    
+          # 安全读取版本号
+          $verLine = Get-Content $verPath | Select-String '#define VERSION'
           $version = $verLine.Line.Split()[-1].Trim('"')
-          New-Item -ItemType Directory -Force -Path "aseprite-$version-windows"
-          Copy-Item "build\bin\aseprite.*" "aseprite-$version-windows"
-          Compress-Archive -Path "aseprite-$version-windows" -DestinationPath "aseprite-$version-windows.zip"
-          echo "PACKAGE_PATH=$PWD/aseprite-$version-windows.zip" >> $env:GITHUB_ENV
+    
+          # 打包操作
+          $pkgDir = "aseprite-$version-windows"
+          New-Item -Type Directory -Path $pkgDir -Force
+          Copy-Item "build\bin\*" $pkgDir
+          Compress-Archive -Path $pkgDir -DestinationPath "$pkgDir.zip"
+    
+          # 导出路径供后续上传使用
+          echo "PACKAGE_PATH=$pwd\$pkgDir.zip" >> $env:GITHUB_ENV
       
       # 修复点2：上传步骤独立于Package Release
       - name: Upload Artifact
