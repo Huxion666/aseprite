@@ -22,23 +22,21 @@ jobs:
     - name: Install Dependencies
       shell: bash
       run: |
-        # 下载预编译Skia（避免源码编译失败）
+        # 修正点1：使用正确的7z解压参数
         skia_url="https://github.com/aseprite/skia/releases/latest/download/Skia-Windows-Release-x64.zip"
-        curl -L -o skia.zip $skia_url --retry 3
-        7z x skia.zip -skia
+        curl -L -o skia.zip "$skia_url" --retry 3
         
-        # 获取必需运行时库（解决DLL缺失问题）
+        # 下载必需DLL（修复运行时缺失）
         declare -a dlls=(
-          "libcrypto-1_1-x64.dll"
-          "libssl-1_1-x64.dll"
-          "vcruntime140.dll"
-          "vcruntime140_1.dll"
-          "msvcp140.dll"
+          "libcrypto-1_1-x64.dll" "libssl-1_1-x64.dll"
+          "vcruntime140.dll" "vcruntime140_1.dll" "msvcp140.dll"
         )
-        
         for dll in "${dlls[@]}"; do
-          curl -L "https://github.com/blueloveTH/aseprite/releases/download/v0.01/$dll" -o $dll
+          curl -L "https://github.com/blueloveTH/aseprite/releases/download/v0.01/$dll" -o "$dll"
         done
+        
+        # 关键修复：-o 指定输出目录（原错误参数 -skia）
+        7z x skia.zip -oskia  # 注意 -o 和目录名之间无空格 
     
     - name: Configure CMake
       shell: bash
@@ -48,17 +46,15 @@ jobs:
           -DLAF_BACKEND=skia \
           -DENABLE_UI=ON \
           -DSKIA_DIR=$PWD/skia \
-          -DSKIA_LIBRARY_DIR=$PWD/skia/out/Release-x64 \
-          -DCMAKE_INSTALL_PREFIX=$PWD/package
+          -DSKIA_LIBRARY_DIR=$PWD/skia/out/Release-x64
     
     - name: Compile
       shell: bash
       run: |
         cd build
-        ninja -j ${NUMBER_OF_PROCESSORS}  # 动态核心数优化
-        
-        # 运行时验证（提前暴露DLL问题）
-        ./bin/aseprite.exe --version || echo "Runtime check failed"
+        ninja -j $(nproc)
+        # 运行时验证
+        ./bin/aseprite.exe --version || echo "运行时验证失败"
     
     - name: Package Artifacts
       shell: bash
@@ -67,16 +63,10 @@ jobs:
         cp build/bin/aseprite.exe dist/
         cp *.dll dist/  # 包含所有必需DLL
         cp -r build/bin/data dist/
-        
-        # 创建便携式压缩包
         7z a aseprite-${{ matrix.build_type }}.zip ./dist/*
-        
-        # 生成版本标记
-        echo "VERSION=$(date +%Y%m%d-%H%M)" >> $GITHUB_ENV
     
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: asepprite-${{ env.VERSION }}
-        path: aseprite-${{ matrix.build_type }}.zip
-        retention-days: 7
+        name: aseprime-build
+        path: aseprite-*.zip
