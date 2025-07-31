@@ -54,6 +54,17 @@ jobs:
       shell: bash
       run: cd build && ninja
     
+    - name: Verify Build Output
+      shell: powershell
+      run: |
+        # 验证编译是否成功
+        if (-not (Test-Path "build\bin\aseprite.exe")) {
+            Write-Error "❌ aseprite.exe not generated in build\bin"
+            Get-ChildItem build\bin -Recurse
+            exit 1
+        }
+        Write-Host "✅ Build successful - aseprite.exe exists"
+    
     - name: Running C++ Tests
       shell: bash
       run: cd build && ctest --output-on-failure
@@ -66,49 +77,45 @@ jobs:
         cd tests
         bash run-tests.sh
     
-    - name: Package Release
-      shell: powershell
+    - name: Extract Version (Bash)
+      shell: bash
       run: |
-        # 动态定位 ver.h 文件
-        $verPath = if (Test-Path "build\src\ver.h") { "build\src\ver.h" } else { "src\ver.h" }
-        if (-not (Test-Path $verPath)) {
-          Write-Error "❌ 致命错误：未找到版本文件 ver.h"
-          Get-ChildItem -Recurse -Filter "ver.h" | Format-Table FullName
-          exit 1
-        }
+        # 使用 Bash 替代 PowerShell 提取版本号
+        if [[ -f "build/src/ver.h" ]]; then
+            ver_file="build/src/ver.h"
+        else
+            ver_file="src/ver.h"
+        fi
         
-        # 安全读取版本号
-        $versionLine = Get-Content $verPath | Select-String '#define VERSION'
-        if (-not $versionLine) {
-          Write-Error "❌ 在版本文件中未找到 VERSION 定义"
-          exit 1
-        }
-        $version = $versionLine.Line.Split()[-1] -replace '"', ''
+        # 提取版本号并存储到环境变量
+        version=$(grep '#define VERSION' "$ver_file" | awk '{print $3}' | tr -d '"')
+        echo "VERSION=$version" >> $GITHUB_ENV
+        echo "Extracted version: $version"
+    
+    - name: Package Release
+      shell: bash
+      run: |
+        # 使用 Bash 进行打包操作
+        pkg_dir="aseprite-$VERSION-windows-${{ matrix.ui }}-${{ matrix.build_type }}"
+        mkdir -p "$pkg_dir"
         
-        # 打包操作
-        $pkgDir = "aseprite-$version-windows-${{ matrix.ui }}-${{ matrix.build_type }}"
-        New-Item -ItemType Directory -Path $pkgDir -Force
-        Copy-Item "build\bin\aseprite.*" $pkgDir
+        # 复制所有二进制文件
+        cp build/bin/aseprite.* "$pkg_dir/"
         
         # 添加 MSVC 运行时
-        if (Test-Path "build\bin\vc_redist.x64.exe") {
-          Copy-Item "build\bin\vc_redist.x64.exe" $pkgDir
-        }
+        if [[ -f "build/bin/vc_redist.x64.exe" ]]; then
+            cp "build/bin/vc_redist.x64.exe" "$pkg_dir/"
+        fi
         
-        Compress-Archive -Path $pkgDir -DestinationPath "$pkgDir.zip"
-        echo "PACKAGE_PATH=$pwd\$pkgDir.zip" >> $env:GITHUB_ENV
-    
-    - name: Verify Build Output
-      shell: powershell
-      run: |
-        if (-not (Test-Path "build\bin\aseprite.exe")) {
-          Get-ChildItem build\bin -Recurse
-          Write-Error "❌ asepprite.exe 未生成"
-          exit 1
-        }
+        # 压缩打包
+        zip -r "$pkg_dir.zip" "$pkg_dir"
+        
+        # 设置输出路径
+        echo "PACKAGE_PATH=$(pwd)/$pkg_dir.zip" >> $GITHUB_ENV
+        echo "Package created at: $(pwd)/$pkg_dir.zip"
     
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: asepprite-build-${{ matrix.ui }}-${{ matrix.build_type }}
+        name: aseprite-build-${{ matrix.ui }}-${{ matrix.build_type }}
         path: ${{ env.PACKAGE_PATH }}
