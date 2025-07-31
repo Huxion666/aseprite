@@ -6,97 +6,109 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        build_type: [RelWithDebInfo]
-        ui: [gui]
-        scripting: [lua]
-    
+        build_type: [RelWithDebInfo, Debug]
+        ui: [gui, cli]
+        scripting: [lua, noscripts]
+        exclude:
+          - build_type: Debug
+            ui: gui
+          - build_type: RelWithDebInfo
+            ui: cli
+          - build_type: RelWithDebInfo
+            scripting: noscripts
     steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: 'recursive'
-      
-      - name: Install Skia
-        if: ${{ matrix.ui == 'gui' }}
-        shell: bash
-        run: |
-          WORKSPACE_PATH="${GITHUB_WORKSPACE//\\//}"
-          skia_url=$(source "$WORKSPACE_PATH/laf/misc/skia-url.sh")
-          curl --retry 3 -L -o skia.zip "$skia_url"
-          unzip -q skia.zip -d skia
-      
-      - uses: aseprite/get-ninja@main
-      - uses: ilammy/msvc-dev-cmd@v1
-      
-      - name: Generating Makefiles
-        shell: bash
-        run: |
-          cmake -S . -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
-            -DENABLE_SCRIPTING=ON \
-            -DLAF_BACKEND=skia \
-            -DSKIA_DIR="$PWD/skia" \
-            -DSKIA_LIBRARY_DIR="$PWD/skia/out/Release-x64"
-      
-      - name: Compiling
-        shell: bash
-        run: cd build && ninja
-      
-      - name: Verify Build Output
-        shell: powershell
-        run: |
-          if (-not (Test-Path "build\bin\aseprite.exe")) {
-            Write-Error "❌ 编译失败：未找到 aseprite.exe"
-            Get-ChildItem build\bin
-            exit 1
-          }
-      
-      - name: Package Release
-        shell: powershell
-        run: |
-          # 查找版本文件
-          $verPath = $null
-          if (Test-Path "build\src\ver.h") { 
-              $verPath = "build\src\ver.h"
-          } 
-          elseif (Test-Path "src\ver.h") { 
-              $verPath = "src\ver.h"
-          }
-          if (-not $verPath -or -not (Test-Path $verPath)) { 
-              Write-Error "❌ 致命错误：未找到版本文件 ver.h" 
-              Get-ChildItem -Recurse -Filter "ver.h" | Format-Table FullName 
-              exit 1 
-          }
+    - uses: actions/checkout@v4
+      with:
+        submodules: 'recursive'
+    
+    - name: Install Skia
+      if: ${{ matrix.ui == 'gui' }}
+      shell: bash
+      run: |
+        skia_url=$(source "${GITHUB_WORKSPACE//\\//}/laf/misc/skia-url.sh" | xargs)
+        skia_file=$(basename "$skia_url")
+        curl --retry 3 --ssl-revoke-best-effort -L -o "$skia_file" "$skia_url"
+        unzip -q "$skia_file" -d skia
+    
+    - uses: aseprite/get-ninja@main
+    - uses: ilammy/msvc-dev-cmd@v1
+    
+    - name: Generating Makefiles
+      shell: bash
+      run: |
+        # Windows 专用配置
+        export enable_ccache=off
+        [[ "${{ matrix.ui }}" == "gui" ]] && export laf_backend=skia || export laf_backend=none
+        [[ "${{ matrix.scripting }}" == "lua" ]] && export enable_scripting=on || export enable_scripting=off
+        export skia_arch=x64  # Windows 固定为 x64
 
-          # 安全读取版本号
-          $versionContent = Get-Content $verPath
-          $versionLine = $versionContent | Where-Object { $_ -match '#define VERSION' }
-
-          if (-not $versionLine) {
-              Write-Error "❌ 在版本文件中未找到 VERSION 定义"
-              exit 1
-          }
-
-          # 提取版本号
-          $version = $versionLine.Split()[-1] -replace '"', ''
-
-          # 打包操作
-          $pkgDir = "aseprite-$version-windows"
-          New-Item -ItemType Directory -Path $pkgDir -Force
-          Copy-Item "build\bin\aseprite.*" $pkgDir
-
-          # 添加额外必要的 DLL 文件
-          if (Test-Path "build\bin\vc_redist.x64.exe") {
-              Copy-Item "build\bin\vc_redist.x64.exe" $pkgDir
-          }
-
-          Compress-Archive -Path $pkgDir -DestinationPath "$pkgDir.zip"
-
-          # 导出路径供后续上传使用
-          $packagePath = (Resolve-Path "$pwd\$pkgDir.zip").Path
-          echo "PACKAGE_PATH=$packagePath" >> $env:GITHUB_ENV
-      
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: aseprite-build
-          path: ${{ env.PACKAGE_PATH }}
+        cmake -S . -B build -G Ninja \
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+          -DENABLE_SCRIPTING=$enable_scripting \
+          -DENABLE_CCACHE=$enable_ccache \
+          -DLAF_BACKEND=$laf_backend \
+          -DSKIA_DIR="$PWD/skia" \
+          -DSKIA_LIBRARY_DIR="$PWD/skia/out/Release-$skia_arch"
+    
+    - name: Compiling
+      shell: bash
+      run: cd build && ninja
+    
+    - name: Running C++ Tests
+      shell: bash
+      run: cd build && ctest --output-on-failure
+    
+    - name: Running CLI Tests
+      if: ${{ matrix.scripting == 'lua' }}
+      shell: bash
+      run: |
+        export ASEPRITE=$PWD/build/bin/aseprite
+        cd tests
+        bash run-tests.sh
+    
+    - name: Package Release
+      shell: powershell
+      run: |
+        # 动态定位 ver.h 文件
+        $verPath = if (Test-Path "build\src\ver.h") { "build\src\ver.h" } else { "src\ver.h" }
+        if (-not (Test-Path $verPath)) {
+          Write-Error "❌ 致命错误：未找到版本文件 ver.h"
+          Get-ChildItem -Recurse -Filter "ver.h" | Format-Table FullName
+          exit 1
+        }
+        
+        # 安全读取版本号
+        $versionLine = Get-Content $verPath | Select-String '#define VERSION'
+        if (-not $versionLine) {
+          Write-Error "❌ 在版本文件中未找到 VERSION 定义"
+          exit 1
+        }
+        $version = $versionLine.Line.Split()[-1] -replace '"', ''
+        
+        # 打包操作
+        $pkgDir = "aseprite-$version-windows-${{ matrix.ui }}-${{ matrix.build_type }}"
+        New-Item -ItemType Directory -Path $pkgDir -Force
+        Copy-Item "build\bin\aseprite.*" $pkgDir
+        
+        # 添加 MSVC 运行时
+        if (Test-Path "build\bin\vc_redist.x64.exe") {
+          Copy-Item "build\bin\vc_redist.x64.exe" $pkgDir
+        }
+        
+        Compress-Archive -Path $pkgDir -DestinationPath "$pkgDir.zip"
+        echo "PACKAGE_PATH=$pwd\$pkgDir.zip" >> $env:GITHUB_ENV
+    
+    - name: Verify Build Output
+      shell: powershell
+      run: |
+        if (-not (Test-Path "build\bin\aseprite.exe")) {
+          Get-ChildItem build\bin -Recurse
+          Write-Error "❌ asepprite.exe 未生成"
+          exit 1
+        }
+    
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: asepprite-build-${{ matrix.ui }}-${{ matrix.build_type }}
+        path: ${{ env.PACKAGE_PATH }}
